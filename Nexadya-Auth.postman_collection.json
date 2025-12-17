@@ -1,0 +1,121 @@
+{
+    "info": {
+      "name": "Nexadya Auth API",
+      "_postman_id": "nexadya-auth-collection",
+      "description": "Authentication (User v1 & Admin v3) including Password Strength, OTP 2FA, and TOTP 2FA",
+      "schema": "https://schema.getpostman.com/json/collection/v2.1.0/collection.json"
+    },
+    "item": [
+      {
+        "name": "V1 - User Auth",
+        "item": [
+          {
+            "name": "Password Strength Check",
+            "request": {
+              "method": "POST",
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "url": { "raw": "http://127.0.0.1:8000/api/v1/auth/password-strength", "protocol": "http", "host": ["127.0.0.1"], "port": "8000", "path": ["api", "v1", "auth", "password-strength"] },
+              "body": { "mode": "raw", "raw": "{\n  \"password\": \"MyP@ssword12345\"\n}" }
+            }
+          },
+          {
+            "name": "User Login (with OTP trigger)",
+            "request": {
+              "method": "POST",
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "url": { "raw": "http://127.0.0.1:8000/api/v1/auth/login", "protocol": "http", "host": ["127.0.0.1"], "port": "8000", "path": ["api", "v1", "auth", "login"] },
+              "body": { "mode": "raw", "raw": "{\n  \"email\": \"user@example.com\",\n  \"password\": \"StrongPass!23\"\n}" }
+            }
+          },
+          {
+            "name": "Verify OTP",
+            "request": {
+              "method": "POST",
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "url": { "raw": "http://127.0.0.1:8000/api/v1/auth/2fa/verify", "protocol": "http", "host": ["127.0.0.1"], "port": "8000", "path": ["api", "v1", "auth", "2fa", "verify"] },
+              "body": { "mode": "raw", "raw": "{\n  \"email\": \"user@example.com\",\n  \"otp\": \"123456\"\n}" }
+            }
+          },
+          {
+            "name": "Resend OTP",
+            "request": {
+              "method": "POST",
+              "header": [
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "url": { "raw": "http://127.0.0.1:8000/api/v1/auth/2fa/resend", "protocol": "http", "host": ["127.0.0.1"], "port": "8000", "path": ["api", "v1", "auth", "2fa", "resend"] },
+              "body": { "mode": "raw", "raw": "{\n  \"email\": \"user@example.com\"\n}" }
+            }
+          }
+        ]
+      },
+      {
+        "name": "V3 - Admin Auth",
+        "item": [
+          {
+            "name": "Enable Admin TOTP",
+            "request": {
+              "method": "POST",
+              "header": [
+                { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "url": { "raw": "http://127.0.0.1:8000/api/v3/auth/2fa/enable", "protocol": "http", "host": ["127.0.0.1"], "port": "8000", "path": ["api", "v3", "auth", "2fa", "enable"] }
+            }
+          },
+          {
+            "name": "Verify Admin TOTP",
+            "request": {
+              "method": "POST",
+              "header": [
+                { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "url": { "raw": "http://127.0.0.1:8000/api/v3/auth/2fa/verify", "protocol": "http", "host": ["127.0.0.1"], "port": "8000", "path": ["api", "v3", "auth", "2fa", "verify"] },
+              "body": { "mode": "raw", "raw": "{\n  \"code\": \"123456\"\n}" }
+            }
+          },
+          {
+            "name": "Disable Admin TOTP",
+            "request": {
+              "method": "POST",
+              "header": [
+                { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "url": { "raw": "http://127.0.0.1:8000/api/v3/auth/2fa/disable", "protocol": "http", "host": ["127.0.0.1"], "port": "8000", "path": ["api", "v3", "auth", "2fa", "disable"] },
+              "body": { "mode": "raw", "raw": "{\n  \"password\": \"AdminStrongPass!23\"\n}" }
+            }
+          },
+          {
+            "name": "Admin 2FA Status",
+            "request": {
+              "method": "GET",
+              "header": [
+                { "key": "Authorization", "value": "Bearer {{admin_token}}" }
+              ],
+              "url": { "raw": "http://127.0.0.1:8000/api/v3/auth/2fa/status", "protocol": "http", "host": ["127.0.0.1"], "port": "8000", "path": ["api", "v3", "auth", "2fa", "status"] }
+            }
+          },
+          {
+            "name": "Generate Admin Backup Codes",
+            "request": {
+              "method": "POST",
+              "header": [
+                { "key": "Authorization", "value": "Bearer {{admin_token}}" },
+                { "key": "Content-Type", "value": "application/json" }
+              ],
+              "url": { "raw": "http://127.0.0.1:8000/api/v3/auth/2fa/backup-codes", "protocol": "http", "host": ["127.0.0.1"], "port": "8000", "path": ["api", "v3", "auth", "2fa", "backup-codes"] }
+            }
+          }
+        ]
+      }
+    ]
+  }
+  
