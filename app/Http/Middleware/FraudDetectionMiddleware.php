@@ -4,47 +4,42 @@ namespace App\Http\Middleware;
 
 use Closure;
 use Illuminate\Http\Request;
-use Illuminate\Support\Facades\Log;
 use Illuminate\Support\Facades\Cache;
+use Illuminate\Support\Facades\Log;
 use App\Models\User;
 use App\Models\FraudAuditLog;
+use Illuminate\Support\Str;
 
+/**
+ * FraudDetectionMiddleware
+ * 
+ * Implements multi-layer fraud detection:
+ * - Rate limiting
+ * - Device fingerprinting (NO BYPASS)
+ * - User agent tracking
+ * - IP monitoring
+ */
 class FraudDetectionMiddleware
 {
-    private const CACHE_TTL = 300; // 5 minutes
-    private const MAX_ALERTS_PER_REQUEST = 10;
-    private const PERFORMANCE_THRESHOLD_MS = 100;
-
-    /**
-     * Handle an incoming request.
-     */
-    public function handle(Request $request, Closure $next, $type = null)
+    public function handle(Request $request, Closure $next, ...$params)
     {
-        $startTime = microtime(true);
-        
         try {
+            $type = $params[0] ?? null;
             $ip = $request->ip();
-            $userId = auth()->check() ? auth()->id() : null;
+            $userId = $request->user()?->id;
 
-            // Early return for unauthenticated users on non-critical routes
-            if (!$userId && !$this->isCriticalRoute($request)) {
+            // Skip for OPTIONS requests
+            if ($request->isMethod('OPTIONS')) {
                 return $next($request);
             }
 
-            // Perform fraud check
-            $result = $this->performFraudCheck($request, $userId, $ip, $type, $next);
-            
-            $executionTime = (microtime(true) - $startTime) * 1000;
-            
-            // Log performance metrics
-            if ($executionTime > self::PERFORMANCE_THRESHOLD_MS) {
-                Log::warning("Fraud detection slow: {$executionTime}ms for user {$userId}");
+            if (!$type) {
+                return $next($request);
             }
-            
-            return $result;
-            
-        } catch (\Exception $e) {
-            Log::error("Fraud detection error: " . $e->getMessage(), [
+
+            return $this->performFraudCheck($request, $userId, $ip, $type, $next);
+        } catch (\Throwable $e) {
+            Log::error('Fraud detection middleware error: ' . $e->getMessage(), [
                 'user_id' => $userId ?? null,
                 'ip' => $ip ?? null,
                 'trace' => $e->getTraceAsString()
@@ -154,10 +149,12 @@ class FraudDetectionMiddleware
         ]);
     }
 
+    /**
+     * ✅ FIXED - No bypass: Generate device fingerprint if missing
+     */
     private function checkDevice($userId, $ip, $request)
     {
         $deviceHash = $request->header('X-Device-Hash');
-        $userAgent = $request->header('User-Agent');
 
         // Cache user data to reduce database queries
         $user = Cache::remember("user:{$userId}", 300, function() use ($userId) {
@@ -171,27 +168,44 @@ class FraudDetectionMiddleware
             ], 401);
         }
 
-        // Skip device check for API requests without device hash header
+        // ✅ FIX - Don't skip validation - generate hash from available data
         if (!$deviceHash) {
+            $deviceHash = $this->generateDeviceFingerprint($request);
+        }
+
+        // First time user - store device hash
+        if (!$user->last_device_hash) {
+            User::where('id', $userId)->update(['last_device_hash' => $deviceHash]);
+            Cache::forget("user:{$userId}");
             return true;
         }
 
-        // Only check if user has a device hash stored and we have a device hash from request
-        if ($user->last_device_hash && $user->last_device_hash !== $deviceHash) {
-            $this->logFraud($userId, 'device_change', $ip, 'Device changed');
+        // Device changed - require re-authentication
+        if ($user->last_device_hash !== $deviceHash) {
+            $this->logFraud($userId, 'device_change', $ip, 'Device hash mismatch');
             return response()->json([
                 'ok' => false,
                 'error' => 'Device changed. Please login again.'
-            ], 429);
-        }
-
-        // Optionally update device hash if not set
-        if (!$user->last_device_hash && $deviceHash) {
-            User::where('id', $userId)->update(['last_device_hash' => $deviceHash]);
-            Cache::forget("user:{$userId}");
+            ], 403);
         }
 
         return true;
+    }
+
+    /**
+     * ✅ NEW - Generate device fingerprint from browser characteristics
+     */
+    private function generateDeviceFingerprint(Request $request): string
+    {
+        // Generate consistent hash from browser fingerprint
+        $components = [
+            $request->userAgent() ?? '',
+            $request->header('Accept-Language') ?? '',
+            $request->header('Accept-Encoding') ?? '',
+            $request->header('Accept') ?? '',
+        ];
+        
+        return hash('sha256', implode('|', array_filter($components)));
     }
 
     private function checkUserAgent($userId, $userAgent, $ip, $request)

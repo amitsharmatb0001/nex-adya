@@ -13,14 +13,19 @@ return [
     | authentication cookies. Typically, these should include your local
     | and production domains which access your API via a frontend SPA.
     |
+    | ✅ SECURE - No default localhost domains in production
+    | Set SANCTUM_STATEFUL_DOMAINS in your environment file to specify
+    | allowed domains explicitly. Never use wildcards or localhost in production.
+    |
+    | Example .env.local (development):
+    | SANCTUM_STATEFUL_DOMAINS=localhost:3000,localhost:8000,127.0.0.1:3000
+    |
+    | Example .env.production:
+    | SANCTUM_STATEFUL_DOMAINS=app.nexadya.com,api.nexadya.com
+    |
     */
 
-    'stateful' => explode(',', env('SANCTUM_STATEFUL_DOMAINS', sprintf(
-        '%s%s',
-        'localhost,localhost:3000,127.0.0.1,127.0.0.1:8000,::1',
-        Sanctum::currentApplicationUrlWithPort(),
-        // Sanctum::currentRequestHost(),
-    ))),
+    'stateful' => explode(',', env('SANCTUM_STATEFUL_DOMAINS', '')),
 
     /*
     |--------------------------------------------------------------------------

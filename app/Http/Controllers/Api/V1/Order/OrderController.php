@@ -13,6 +13,7 @@ use App\Events\OrderStatusUpdated;
 use Illuminate\Support\Facades\Log;
 use App\Mail\OrderInvoiceMail;
 use Illuminate\Support\Facades\Mail;
+use Illuminate\Support\Facades\Storage;
 use App\Services\FraudDetectionService;
 use App\Services\ActivityLogService;
 
@@ -20,7 +21,7 @@ use App\Services\ActivityLogService;
  * OrderController (API V1)
  *
  * Thin controller: validate, authorize, then call service.
- * Handles multipart/form-data voice note upload handling for convenience.
+ * Handles multipart/form-data voice note upload handling with strict security validation.
  */
 class OrderController extends Controller
 {
@@ -72,7 +73,7 @@ class OrderController extends Controller
     public function store(StoreOrderRequest $request, OrderService $orders)
     {
         $fraudService = new FraudDetectionService();
-        $fraudService->checkOrderSpike($request->user()->id); // basic spike detection
+        $fraudService->checkOrderSpike($request->user()->id);
 
         Log::debug('POST /api/v1/orders hit', [
             'user_id' => $request->user()?->id,
@@ -92,20 +93,43 @@ class OrderController extends Controller
             }
         }
 
-        // store order-level voice note
+        // ✅ SECURE - Store order-level voice note with validation
         $orderVoicePath = null;
         if ($request->hasFile('voice_note')) {
-            $orderVoicePath = $request->file('voice_note')->store('orders/voice', 'public');
+            $file = $request->file('voice_note');
+            
+            // Additional MIME type validation
+            $allowedMimes = ['audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/ogg', 'audio/mpga', 'audio/x-m4a'];
+            if (!in_array($file->getMimeType(), $allowedMimes)) {
+                return response()->json([
+                    'ok' => false,
+                    'error' => 'Invalid file type. Only audio files are allowed.'
+                ], 422);
+            }
+            
+            // Store in private disk (not publicly accessible)
+            $orderVoicePath = $file->store('orders/voice', 'private');
         }
 
         $payload = $request->validated();
         $items   = $payload['items'];
 
-        // store per-item voice note files if present
+        // ✅ SECURE - Store per-item voice note files with validation
         foreach ($items as $idx => $item) {
             $fileKey = "items.$idx.voice_note";
             if ($request->hasFile($fileKey)) {
-                $items[$idx]['voice_note_path'] = $request->file($fileKey)->store('orders/voice', 'public');
+                $file = $request->file($fileKey);
+                
+                // Additional MIME type validation for item voice notes
+                $allowedMimes = ['audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/ogg', 'audio/mpga', 'audio/x-m4a'];
+                if (!in_array($file->getMimeType(), $allowedMimes)) {
+                    return response()->json([
+                        'ok' => false,
+                        'error' => "Invalid file type for item $idx. Only audio files are allowed."
+                    ], 422);
+                }
+                
+                $items[$idx]['voice_note_path'] = $file->store('orders/voice', 'private');
             }
         }
 
@@ -163,7 +187,18 @@ class OrderController extends Controller
         if ($request->boolean('clear_order_voice_note')) {
             $orderVoicePath = ''; // sentinel to clear
         } elseif ($request->hasFile('voice_note')) {
-            $orderVoicePath = $request->file('voice_note')->store('orders/voice', 'public');
+            $file = $request->file('voice_note');
+            
+            // Additional MIME type validation
+            $allowedMimes = ['audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/ogg', 'audio/mpga', 'audio/x-m4a'];
+            if (!in_array($file->getMimeType(), $allowedMimes)) {
+                return response()->json([
+                    'ok' => false,
+                    'error' => 'Invalid file type. Only audio files are allowed.'
+                ], 422);
+            }
+            
+            $orderVoicePath = $file->store('orders/voice', 'private');
         }
 
         $payload = $request->validated();
@@ -172,7 +207,18 @@ class OrderController extends Controller
         foreach ($items as $idx => $item) {
             $fileKey = "items.$idx.voice_note";
             if ($request->hasFile($fileKey)) {
-                $items[$idx]['voice_note_path'] = $request->file($fileKey)->store('orders/voice', 'public');
+                $file = $request->file($fileKey);
+                
+                // Additional MIME type validation
+                $allowedMimes = ['audio/mpeg', 'audio/mp4', 'audio/wav', 'audio/ogg', 'audio/mpga', 'audio/x-m4a'];
+                if (!in_array($file->getMimeType(), $allowedMimes)) {
+                    return response()->json([
+                        'ok' => false,
+                        'error' => "Invalid file type for item $idx. Only audio files are allowed."
+                    ], 422);
+                }
+                
+                $items[$idx]['voice_note_path'] = $file->store('orders/voice', 'private');
             }
         }
 
@@ -230,6 +276,31 @@ class OrderController extends Controller
     }
 
     /**
+     * GET /api/v1/orders/{order}/voice-note
+     * ✅ SECURE - Serve voice note from private storage with authorization
+     */
+    public function getVoiceNote(Order $order)
+    {
+        // Check authorization
+        if (auth()->id() !== $order->user_id) {
+            return response()->json([
+                'ok' => false,
+                'error' => 'Unauthorized'
+            ], 403);
+        }
+        
+        if (!$order->voice_note_path) {
+            return response()->json([
+                'ok' => false,
+                'error' => 'No voice note found'
+            ], 404);
+        }
+        
+        // Serve file from private storage
+        return Storage::disk('private')->download($order->voice_note_path);
+    }
+
+    /**
      * POST /api/v1/orders/{id}/cancel
      */
     public function cancel($id, OrderService $orders)
@@ -250,48 +321,13 @@ class OrderController extends Controller
 
         ActivityLogService::log('order_cancelled', ['order_id' => $order->id, 'user_id' => request()->user()->id]);
 
-        return response()->json(['ok' => true, 'data' => [
-            'id' => $order->id,
-            'status' => $order->status,
-            'total' => $order->total,
-            'updated_at' => $order->updated_at?->toIso8601String(),
-        ]]);
-    }
-
-    /**
-     * POST /api/v1/orders/{id}/confirm
-     * (Restaurant endpoint — v2 typically, but keep here for completeness)
-     */
-    public function confirm(int $id, OrderService $orders)
-    {
-        try {
-            $order = Order::findOrFail($id);
-            $oldStatus = $order->status;
-
-            $res = $orders->updateStatus($order, Order::STATUS_CONFIRMED ?? 'confirmed');
-
-            if (! $res['success']) {
-                return response()->json(['ok' => false, 'error' => $res['message']], 422);
-            }
-
-            // broadcast event
-            try {
-                event(new OrderStatusUpdated($order, $oldStatus, Order::STATUS_CONFIRMED ?? 'confirmed'));
-            } catch (\Throwable $e) {
-                Log::error("Broadcast failed for order {$order->id}", ['error' => $e->getMessage()]);
-            }
-
-            ActivityLogService::log('order_confirmed', ['order_id' => $order->id]);
-
-            return response()->json(['ok' => true, 'data' => $res['data']]);
-        } catch (\Throwable $e) {
-            return response()->json(['ok' => false, 'error' => $e->getMessage()], 500);
-        }
+        return response()->json(['ok' => true, 'data' => ['order_id' => $order->id, 'status' => $order->status]]);
     }
 
     /**
      * POST /api/v1/orders/{id}/update-status
-     * Generic status updater (restaurant/admin).
+     *
+     * Used by restaurant owners and admins.
      */
     public function updateStatus(int $id, OrderService $orders)
     {

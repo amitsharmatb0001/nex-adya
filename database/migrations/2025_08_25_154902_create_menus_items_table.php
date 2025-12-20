@@ -11,6 +11,7 @@ return new class extends Migration {
             $table->id();
             $table->foreignId('menu_id')->constrained()->cascadeOnDelete();
             $table->string('name');          // "Paneer Tikka"
+            $table->text('description')->nullable();  // Add after 'name'
             $table->unsignedInteger('price'); // in paise; 19900 => ₹199
             $table->boolean('veg')->default(true);
             $table->decimal('rating', 3, 2)->default(0); // 0.00–5.00

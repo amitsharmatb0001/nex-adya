@@ -71,8 +71,11 @@ Route::middleware('auth:sanctum')->group(function () {
     Route::get('/activity', [ActivityLogController::class, 'index'])->middleware('role:user');
     Route::delete('/activity/{id}', [ActivityLogController::class, 'destroy'])->middleware('role:user');
     Route::get('/activity/export', [ActivityLogController::class, 'export'])->middleware('role:user');
-
+    // Secure voice note download route
+    Route::get('/orders/{order}/voice-note', [OrderController::class, 'getVoiceNote'])
+        ->middleware('role:user');
 });
+
                                 
 
 

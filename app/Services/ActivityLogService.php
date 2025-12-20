@@ -2,71 +2,92 @@
 
 namespace App\Services;
 
-use App\Models\ActivityLog;
-use Illuminate\Support\Facades\Log;
+use App\Jobs\LogActivityJob;
 
+/**
+ * ✅ P2 FIX #12: Async Activity Logging Service
+ * 
+ * REPLACE: app/Services/ActivityLogService.php
+ * 
+ * Changes:
+ * - Dispatches LogActivityJob instead of synchronous DB write
+ * - Uses afterResponse() to avoid blocking API responses
+ * - Supports both queued and sync modes via environment variable
+ */
 class ActivityLogService
 {
     /**
-     * Log an activity to DB and debug log.
-     * $payload accepts array or scalar.
+     * Log an activity event asynchronously.
+     *
+     * @param string $event Event name (e.g., 'login_success', 'order_placed')
+     * @param array $data Event-specific data to log
+     * @param array|null $meta Additional metadata (optional)
+     * @param bool $sensitive Mark log as containing sensitive info (default: false)
+     * @return void
      */
-    public static function log(string $event, array $meta = [], ?int $userId = null, ?string $sensitive = null): void
-    {
-        try {
-            $data = [
-                'user_id' => $userId ?? ($meta['user_id'] ?? auth()->id()),
-                'event'  => $event,
-                'ip'      => $meta['ip'] ?? request()->ip(),
-                'user_agent' => $meta['user_agent'] ?? request()->userAgent(),
-                'actor_type' => $meta['actor_type'] ?? null,
-                'actor_id'   => $meta['actor_id'] ?? null,
-                'meta' => $meta,
-                'sensitive' => $sensitive, // For encrypted sensitive data
-            ];
-            
-            // Store in database using Eloquent model
-            ActivityLog::create($data);
-            
-            // Also log to file for debugging (keeping old behavior)
-            Log::info("Activity: {$event}", $data);
-            
-        } catch (\Throwable $e) {
-            // Don't let logging failures affect user flow; fallback to debug log
-            Log::error("ActivityLog write failed: {$event} : {$e->getMessage()}", ['meta' => $meta]);
+    public static function log(
+        string $event,
+        array $data,
+        ?array $meta = null,
+        bool $sensitive = false
+    ): void {
+        // Check if async logging is enabled (default: true)
+        $async = config('logging.activity.async', true);
+
+        if ($async) {
+            // ✅ ASYNC: Queue the job (doesn't block response)
+            dispatch(new LogActivityJob(
+                event: $event,
+                data: $data,
+                userId: auth()->id(),
+                ip: request()->ip() ?? '0.0.0.0',
+                userAgent: request()->userAgent() ?? 'Unknown',
+                meta: $meta,
+                sensitive: $sensitive
+            ))->afterResponse();
+        } else {
+            // ❌ SYNC: Direct database write (fallback for testing)
+            \App\Models\ActivityLog::create([
+                'event'      => $event,
+                'data'       => json_encode($data),
+                'user_id'    => auth()->id(),
+                'ip'         => request()->ip() ?? '0.0.0.0',
+                'user_agent' => request()->userAgent() ?? 'Unknown',
+                'meta'       => $meta ? json_encode($meta) : null,
+                'sensitive'  => $sensitive,
+                'created_at' => now(),
+            ]);
         }
     }
 
     /**
-     * Log payout-specific activities
+     * Log a sensitive activity event (passwords, 2FA, etc.)
+     *
+     * @param string $event Event name
+     * @param array $data Event data (will be marked as sensitive)
+     * @return void
      */
-    public static function logPayoutActivity(string $event, int $payoutId, array $additionalContext = []): void
+    public static function logSensitive(string $event, array $data): void
     {
-        self::log($event, array_merge([
-            'payout_id' => $payoutId,
-            'payout_event' => $event,
-        ], $additionalContext));
+        self::log($event, $data, null, true);
     }
 
     /**
-     * Log user activities
+     * Force synchronous logging (for critical events that must be logged immediately)
+     *
+     * @param string $event Event name
+     * @param array $data Event data
+     * @return void
      */
-    public static function logUserActivity(string $event, int $targetUserId, array $additionalContext = []): void
+    public static function logSync(string $event, array $data): void
     {
-        self::log($event, array_merge([
-            'target_user_id' => $targetUserId,
-            'user_event' => $event,
-        ], $additionalContext));
-    }
-
-    /**
-     * Log sensitive activities with encryption
-     */
-    public static function logSensitive(string $event, array $meta = [], ?string $sensitiveData = null, ?int $userId = null): void
-    {
-        // Encrypt sensitive data if provided
-        $encryptedSensitive = $sensitiveData ? encrypt($sensitiveData) : null;
-        
-        self::log($event, $meta, $userId, $encryptedSensitive);
+        \App\Models\ActivityLog::create([
+            'event'      => $event,
+            'data'       => json_encode($data),
+            'user_id'    => auth()->id(),
+            'ip'         => request()->ip() ?? '0.0.0.0',
+            'user_agent' => request()->userAgent() ?? 'Unknown',
+            'created_at' => now(),
+        ]);
     }
 }

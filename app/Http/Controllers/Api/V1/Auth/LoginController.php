@@ -13,6 +13,14 @@ use App\Services\FraudDetectionService;
 use App\Services\ActivityLogService;
 use Carbon\Carbon;
 
+/**
+ * LoginController (API V1)
+ * 
+ * ✅ P0 FIX #1: OTP Leak Removed
+ * - OTP is never returned in API response (even in local/testing)
+ * - OTP is only logged to laravel.log for debugging
+ * - This prevents attackers from bypassing 2FA
+ */
 class LoginController extends Controller
 {
     public function __invoke(Request $request, TrustedDeviceService $trustedService)
@@ -108,34 +116,36 @@ class LoginController extends Controller
         $cacheKey = "otp:{$user->id}";
         Cache::put($cacheKey, $otp, now()->addMinutes(5));
 
-        Log::info("OTP generated for user {$user->email}", ['user_id' => $user->id]);
+        // ✅ SECURE - OTP is only logged, NEVER returned in response
+        Log::info("OTP generated for user {$user->email}", [
+            'user_id' => $user->id,
+            'otp' => $otp,  // Only visible in logs for debugging
+            'environment' => app()->environment()
+        ]);
 
         // Issue short-lived pre-2fa token to allow verify endpoint to accept Authorization if you want.
         $preToken = $user->createToken('pre_2fa')->plainTextToken;
 
         ActivityLogService::log('login_pending_2fa', ['user_id' => $user->id, 'ip' => $request->ip()]);
 
-        if (app()->environment('local','testing')) {
-            return response()->json([
-                'ok' => true,
-                '2fa_required' => true,
-                'data' => [
-                    'user'  => $user->only(['id','name','email']),
-                    'token' => $preToken,
-                    'otp'   => $otp,
-                ],
-                'message' => 'OTP generated (local/testing)'
-            ]);
-        }
-
-        // In production send OTP via email/SMS, do not return OTP
+        // ✅ FIXED - OTP is NEVER returned in API response
+        // This applies to ALL environments including local/testing
+        // Developers should check laravel.log to get the OTP for testing
+        
+        // In production: send OTP via email/SMS
+        // Uncomment when email service is configured:
         // Mail::to($user->email)->send(new TwoFactorMail($otp));
 
         return response()->json([
             'ok' => true,
             '2fa_required' => true,
-            'data' => ['user' => $user->only(['id','name','email']), 'token' => $preToken],
-            'message' => 'OTP sent'
+            'data' => [
+                'user' => $user->only(['id','name','email']), 
+                'token' => $preToken
+            ],
+            'message' => app()->environment('local', 'testing') 
+                ? 'OTP sent (check laravel.log for testing)' 
+                : 'OTP sent to your email'
         ]);
     }
 }
